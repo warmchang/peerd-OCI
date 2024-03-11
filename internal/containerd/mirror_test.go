@@ -36,9 +36,11 @@ func TestMirrorConfiguration(t *testing.T) {
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 
 [host.'http://127.0.0.1:5001']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 `,
 			},
 		},
@@ -53,12 +55,14 @@ capabilities = ['pull', 'resolve']
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull']
+skip_verify = true
 `,
 				"/etc/containerd/certs.d/foo.bar:5000/hosts.toml": `server = 'http://foo.bar:5000'
 
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull']
+skip_verify = true
 `,
 			},
 		},
@@ -74,12 +78,14 @@ capabilities = ['pull']
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 `,
 				"/etc/containerd/certs.d/foo.bar:5000/hosts.toml": `server = 'http://foo.bar:5000'
 
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 `,
 			},
 		},
@@ -95,12 +101,14 @@ capabilities = ['pull', 'resolve']
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 `,
 				"/etc/containerd/certs.d/foo.bar:5000/hosts.toml": `server = 'http://foo.bar:5000'
 
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 `,
 			},
 		},
@@ -122,12 +130,14 @@ capabilities = ['pull', 'resolve']
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 `,
 				"/etc/containerd/certs.d/foo.bar:5000/hosts.toml": `server = 'http://foo.bar:5000'
 
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 `,
 			},
 		},
@@ -151,12 +161,14 @@ capabilities = ['pull', 'resolve']
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 `,
 				"/etc/containerd/certs.d/foo.bar:5000/hosts.toml": `server = 'http://foo.bar:5000'
 
 [host]
 [host.'http://127.0.0.1:5000']
 capabilities = ['pull', 'resolve']
+skip_verify = true
 `,
 			},
 		},

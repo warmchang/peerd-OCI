@@ -1,16 +1,15 @@
 // Initial Copyright (c) 2023 Xenit AB and 2024 The Spegel Authors.
 // Portions Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-package state
+package discovery
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	ocitests "github.com/azure/peerd/internal/oci/store/tests"
-	"github.com/azure/peerd/internal/routing/tests"
 	"github.com/azure/peerd/pkg/containerd"
+	"github.com/azure/peerd/pkg/discovery/routing/tests"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +31,7 @@ func TestContainerdStoreAds(t *testing.T) {
 		refs = append(refs, img)
 	}
 
-	containerdStore := ocitests.NewMockContainerdStore(refs)
+	containerdStore := containerd.NewMockContainerdStore(refs)
 	router := tests.NewMockRouter(map[string][]string{})
 
 	ctx, cancel := context.WithCancel(context.TODO())
@@ -41,7 +40,7 @@ func TestContainerdStoreAds(t *testing.T) {
 		cancel()
 	}()
 
-	Advertise(ctx, router, containerdStore, make(<-chan string)) // TODO avtakkar: add tests for file chan
+	Provide(ctx, router, containerdStore, make(<-chan string)) // TODO avtakkar: add tests for file chan
 
 	for _, ref := range refs {
 		peers, ok := router.LookupKey(ref.Digest().String())

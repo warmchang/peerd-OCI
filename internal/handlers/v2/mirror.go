@@ -12,10 +12,9 @@ import (
 	"net/url"
 	"time"
 
-	p2pcontext "github.com/azure/peerd/internal/context"
+	pcontext "github.com/azure/peerd/pkg/context"
 	"github.com/azure/peerd/pkg/discovery/routing"
 	"github.com/azure/peerd/pkg/peernet"
-	"github.com/gin-gonic/gin"
 )
 
 var (
@@ -35,16 +34,14 @@ type Mirror struct {
 	n peernet.Network
 }
 
-var _ gin.HandlerFunc = (&Mirror{}).Handle
-
 // Handle handles a request to this registry mirror.
-func (m *Mirror) Handle(c *gin.Context) {
-	key := c.GetString(p2pcontext.DigestCtxKey)
+func (m *Mirror) Handle(c pcontext.Context) {
+	key := c.GetString(pcontext.DigestCtxKey)
 	if key == "" {
-		key = c.GetString(p2pcontext.ReferenceCtxKey)
+		key = c.GetString(pcontext.ReferenceCtxKey)
 	}
 
-	l := p2pcontext.Logger(c).With().Str("handler", "mirror").Str("ref", key).Logger()
+	l := pcontext.Logger(c).With().Str("handler", "mirror").Str("ref", key).Logger()
 	l.Debug().Msg("mirror handler start")
 	s := time.Now()
 	defer func() {
@@ -72,14 +69,14 @@ func (m *Mirror) Handle(c *gin.Context) {
 		case <-resolveCtx.Done():
 			// Resolving mirror has timed out.
 			//nolint
-			c.AbortWithError(http.StatusNotFound, fmt.Errorf(p2pcontext.PeerNotFoundLog))
+			c.AbortWithError(http.StatusNotFound, fmt.Errorf(pcontext.PeerNotFoundLog))
 			return
 
 		case peer, ok := <-peersChan:
 			// Channel closed means no more mirrors will be received and max retries has been reached.
 			if !ok {
 				//nolint
-				c.AbortWithError(http.StatusInternalServerError, fmt.Errorf(p2pcontext.PeerResolutionExhaustedLog))
+				c.AbortWithError(http.StatusInternalServerError, fmt.Errorf(pcontext.PeerResolutionExhaustedLog))
 				return
 			}
 
@@ -96,7 +93,7 @@ func (m *Mirror) Handle(c *gin.Context) {
 				r.URL = u
 				r.URL.Path = c.Request.URL.Path
 				r.URL.RawQuery = c.Request.URL.RawQuery
-				p2pcontext.SetOutboundHeaders(r, c)
+				pcontext.SetOutboundHeaders(r, c)
 			}
 			proxy.ModifyResponse = func(resp *http.Response) error {
 				if resp.StatusCode != http.StatusOK {

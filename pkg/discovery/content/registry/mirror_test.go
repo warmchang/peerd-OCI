@@ -12,7 +12,9 @@ import (
 
 	pcontext "github.com/azure/peerd/pkg/context"
 	"github.com/azure/peerd/pkg/discovery/routing/mocks"
+	"github.com/azure/peerd/pkg/metrics"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,10 +67,11 @@ func TestMirrorHandler(t *testing.T) {
 	}
 	router := mocks.NewMockRouter(resolver)
 	m := &Mirror{
-		router:         router,
-		resolveRetries: ResolveRetries,
-		resolveTimeout: ResolveTimeout,
-		n:              router.Net(),
+		metricsRecorder: metrics.NewPromMetrics(prometheus.DefaultRegisterer, "test", "test"),
+		router:          router,
+		resolveRetries:  ResolveRetries,
+		resolveTimeout:  ResolveTimeout,
+		n:               router.Net(),
 	}
 
 	tests := []struct {

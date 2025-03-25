@@ -624,10 +624,7 @@ func TestSubscribe(t *testing.T) {
 		}
 	}()
 
-	for {
-		if totalCount >= 1 {
-			break
-		}
+	for totalCount < 1 {
 		time.Sleep(10 * time.Millisecond)
 	}
 
@@ -648,10 +645,7 @@ func TestSubscribe(t *testing.T) {
 		}
 	}()
 
-	for {
-		if totalCount >= 2 {
-			break
-		}
+	for totalCount < 2 {
 		time.Sleep(10 * time.Millisecond)
 	}
 

@@ -5,6 +5,7 @@ package containerd
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/opencontainers/go-digest"
@@ -65,5 +66,5 @@ func (m *MockContainerdStore) Bytes(ctx context.Context, dgst digest.Digest) ([]
 		}
 	}
 
-	return nil, "", nil
+	return nil, "", fmt.Errorf("digest %s not found", dgst)
 }

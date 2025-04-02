@@ -9,13 +9,14 @@ import (
 	"os"
 	"testing"
 
-	"github.com/azure/peerd/pkg/cache"
 	"github.com/azure/peerd/pkg/metrics"
 )
 
 var (
 	ctxWithMetrics, _ = metrics.WithContext(context.Background(), "test", "peerd")
 )
+
+var testFileCachePath string
 
 func TestMain(m *testing.M) {
 	setup()
@@ -28,14 +29,18 @@ func TestMain(m *testing.M) {
 }
 
 func setup() {
-	suf := newRandomStringN(10)
-	cache.Path += suf
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(fmt.Sprintf("failed to get current working directory: %v", err))
+	}
+
+	testFileCachePath = cwd + newRandomStringN(10)
 }
 
 // teardown removes the cache directory.
 func teardown() error {
-	if err := os.RemoveAll(cache.Path); err != nil {
-		return fmt.Errorf("failed to remove cache dir: %v --- %v", cache.Path, err)
+	if err := os.RemoveAll(testFileCachePath); err != nil {
+		return fmt.Errorf("failed to remove cache dir: %v --- %v", testFileCachePath, err)
 	}
 
 	return nil

@@ -201,13 +201,12 @@ jobs:
           sed -i "s/^version:.*/version: \"${RELEASE_NAME}\"/" tools/configure-overlaybd-p2p-helm/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"${RELEASE_NAME}\"/" tools/configure-overlaybd-p2p-helm/Chart.yaml
           
-          helm package build/package/peerd-helm --destination packaged-charts/peerd
-          helm package tools/configure-overlaybd-p2p-helm --destination packaged-charts/tools/aks
+          helm package build/package/peerd-helm --destination packaged-charts
+          helm package tools/configure-overlaybd-p2p-helm --destination packaged-charts
 
       - name: Create Helm Index
         run: |
-          helm repo index packaged-charts/peerd --url "https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_NAME }}/peerd"
-          helm repo index packaged-charts/tools/aks --url "https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_NAME }}/tools/aks"
+          helm repo index packaged-charts --url "https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_NAME }}"
 
       - name: Install GitHub CLI
         run: |
@@ -220,7 +219,6 @@ jobs:
         run: |
           make changelog > changelog.txt
           gh release create ${{ github.ref_name }} \
-            packaged-charts/peerd/**/* \
-            packaged-charts/tools/**/* \
+            packaged-charts/** \
             --title "Helm Charts Release ${{ github.ref_name }}" \
             --notes-file changelog.txt

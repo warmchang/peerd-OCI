@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: &name peerd-llm-ci-ds
+  namespace: peerd-ns
+spec:
+  selector:
+    matchLabels:
+      app: peerd-llm-ci
+  template:
+    metadata:
+      labels:
+        app: peerd-llm-ci
+    spec:
+      containers:
+        - image: $PEERD_LLM_CI_CONTAINER_IMAGE
+          imagePullPolicy: Always
+          name: peerd-llm-ci
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: peerd-status
+                    operator: In
+                    values:
+                      - connected

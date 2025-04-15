@@ -51,8 +51,8 @@ jobs:
         run: |
           docker push ${{ env.REGISTRY }}/${{ env.REPO_PREFIX }}peerd:${{ steps.get_image_tag.outputs.docker_tag }}
 
-  ciCtr:
-    name: Run AKS CTR CI
+  ciPull:
+    name: Run AKS Image Pull CI
     runs-on: ubuntu-latest
     needs: publish
     permissions:
@@ -93,12 +93,12 @@ jobs:
       - name: "Make"
         if: ${{ success() }}
         run: |
-          PEERD_IMAGE_TAG=${{ env.TAG }} make tests-deps-install ci-aks-ctr
+          PEERD_IMAGE_TAG=${{ env.TAG }} make tests-deps-install ci-aks-llm-pull
 
   ciStreaming:
     name: Run AKS Streaming CI
     runs-on: ubuntu-latest
-    needs: [publish, ciCtr]
+    needs: [publish, ciPull]
     permissions:
       contents: read
       id-token: write # This is required for requesting the JWT from AAD.
@@ -137,12 +137,12 @@ jobs:
       - name: "Make"
         if: ${{ success() }}
         run: |
-          PEERD_IMAGE_TAG=${{ env.TAG }} make tests-deps-install ci-aks-streaming
+          PEERD_IMAGE_TAG=${{ env.TAG }} make tests-deps-install ci-aks-llm-streaming
 
   tag:
     name: Tag Stable Peerd Image
     runs-on: ubuntu-latest
-    needs: [publish, ciCtr, ciStreaming]
+    needs: [publish, ciPull, ciStreaming]
     permissions:
       contents: read
       packages: write
@@ -173,7 +173,7 @@ jobs:
   releaseHelm:
     name: Release Peerd Helm Chart
     runs-on: ubuntu-latest
-    needs: [publish, ciCtr, ciStreaming]
+    needs: [publish, ciPull, ciStreaming]
     permissions:
       contents: write
       packages: write

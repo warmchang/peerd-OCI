@@ -9,7 +9,9 @@ RESOURCE_GROUP="p2p-ci-rg"
 LOCATION="westus2"
 AKS_NAME="acrp2pciaks"
 ACR_NAME="acrp2pci"
+export NODE_VM_SIZE="Standard_A4m_v2"
 export TESTS_SCANNER_IMAGE="acrp2pci.azurecr.io/scanner:latest"
+export PEERD_LLM_CI_CONTAINER_IMAGE="acrp2pci.azurecr.io/example-llm/gemma3:27b"
 
 indent() {
     sed 's/^/  /'

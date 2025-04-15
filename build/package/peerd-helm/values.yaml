@@ -31,5 +31,5 @@ peerd:
       cpu: "100m"
 
   affinity:
-    
+
   tolerations:

@@ -6,7 +6,7 @@ source $SCRIPT_DIR/env.sh
 
 PEERD_HELM_CHART="$SCRIPT_DIR/../../package/peerd-helm"
 SCANNER_APP_DEPLOY_TEMPLATE="$SCRIPT_DIR/../k8s/scanner.yml"
-TESTS_AZURE_CLI_DEPLOY_TEMPLATE=$SCRIPT_DIR/../k8s/azure-cli.yml
+PEERD_LLM_CI_DEPLOY_TEMPLATE=$SCRIPT_DIR/../k8s/llm.yml
 
 show_help() {
     usageStr="
@@ -35,19 +35,26 @@ Sub commands:
 * confirm: delete nodepool 'nodepool1'
     $(basename $0) nodepool delete -y 'nodepool1'
 
-* dry run: runs the ctr test on 'nodepool1'
-    $(basename $0) test ctr 'nodepool1'
+* dry run: runs the llm pull test on 'nodepool1'
+    $(basename $0) test llm_pull 'nodepool1'
 
-* confirm: run the ctr test on 'nodepool1'
-    $(basename $0) test ctr -y 'nodepool1'
+* confirm: run the llm pull test on 'nodepool1'
+    $(basename $0) test llm_pull -y 'nodepool1'
 
-* dry run: runs the streaming test on 'nodepool1'
-    $(basename $0) test streaming 'nodepool1'
+* dry run: runs the llm streaming test on 'nodepool1'
+    $(basename $0) test llm_streaming 'nodepool1'
 
-* confirm: run the streaming test on 'nodepool1'
-    $(basename $0) test streaming -y 'nodepool1'
+* confirm: run the llm streaming test on 'nodepool1'
+    $(basename $0) test llm_streaming -y 'nodepool1'
 "
     echo "$usageStr"
+}
+
+trap 'on_error' ERR
+
+on_error() {
+    echo "[on_error] script encountered an error, cleaning up"
+    cmd__peerd_pod_watcher__stop || echo "[on_error] failed to stop peerd pod watcher"
 }
 
 get_aks_credentials() {
@@ -63,15 +70,27 @@ nodepool_deploy() {
     local aksName=$1
     local rg=$2
     local nodepool=$3
+    local configureOverlaybdP2p=$4
 
-    if [ "$DRY_RUN" == "false" ]; then
-        echo "creating nodepool '$nodepool' in aks cluster '$aksName' in resource group '$rg'" && \
-            az aks nodepool add --cluster-name $aksName --name $nodepool --resource-group $rg \
-                --mode User --node-count 3 --labels "peerd=ci" --node-vm-size Standard_D2s_v3  --enable-artifact-streaming
-    else
-        echo "[dry run] would have deployed nodepool '$nodepool' to aks cluster '$aksName' in resource group '$rg'"
+    azCmd="az aks nodepool add --cluster-name $aksName --name $nodepool --resource-group $rg \
+                --mode User --node-count 1 --labels "peerd=ci" --node-vm-size $NODE_VM_SIZE"
+    if [ "$configureOverlaybdP2p" == "true" ]; then
+        azCmd="$azCmd --enable-artifact-streaming"
     fi
 
+    if [ "$DRY_RUN" == "false" ]; then
+        echo "creating nodepool '$nodepool' in aks cluster '$aksName' in resource group '$rg'" && $azCmd
+
+        if [ "$configureOverlaybdP2p" == "true" ]; then
+            helm install --wait overlaybd-p2p $SCRIPT_DIR/../../../tools/configure-overlaybd-p2p-helm \
+                --set "overlaybd.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=peerd" \
+                --set "overlaybd.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=In" \
+                --set "overlaybd.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0]=ci"
+        fi
+    else
+        echo "[dry run] would have run command: '$azCmd'"
+        echo "[dry run] would have deployed overlaybd p2p configuration helm chart"
+    fi
 }
 
 peerd_helm_deploy() {
@@ -87,6 +106,9 @@ peerd_helm_deploy() {
             helm install --wait $HELM_RELEASE_NAME $PEERD_HELM_CHART \
                 --set "peerd.image.ref=ghcr.io/azure/acr/dev/peerd:$peerd_image_tag" \
                 --set "peerd.configureMirrors=$configureMirrors" \
+                --set "peerd.hosts[0]=https://acrp2pci.azurecr.io" \
+                --set "peerd.resources.limits.memory=4Gi" \
+                --set "peerd.resources.limits.cpu=2" \
                 --set "peerd.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=peerd" \
                 --set "peerd.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=In" \
                 --set "peerd.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0]=ci"
@@ -97,17 +119,18 @@ peerd_helm_deploy() {
     print_and_exit_if_dry_run
 }
 
-wait_for_peerd_pods() {
+wait_for_pod_events() {
     local cluster=$1
     local rg=$2
     local nodepool=$3
     local event=$4
-    local minimumRequired=$5
+    local selector=$5
+    local minimumRequired=$6
 
     local found=0
 
     # Get the list of pods.
-    pods=$(kubectl -n peerd-ns get pods -l app=peerd -o jsonpath='{.items[*].metadata.name}')
+    pods=$(kubectl -n peerd-ns get pods -l $selector -o jsonpath='{.items[*].metadata.name}')
     echo "pods: $pods"
     total=`echo "$pods" | tr -s " " "\012" | wc -l`
 
@@ -115,40 +138,36 @@ wait_for_peerd_pods() {
         minimumRequired=$total
     fi
 
-    # Loop until all pods are connected or an error occurs.
-    for ((i=1; i<=10; i++)); do
-        # Initialize a counter for connected pods.
+    # Loop until all pods have the event.
+    for ((i=1; i<=300; i++)); do
+        # Initialize a counter for successfully checked pods.
         found=0
 
         # Loop through each pod.
         for pod in $( echo "$pods" | tr -s " " "\012" ); do
             echo "checking pod '$pod' for event '$event'"
-            
+
             foundEvent=$(kubectl -n peerd-ns get events --field-selector involvedObject.kind=Pod,involvedObject.name=$pod -o json | jq -r ".items[] | select(.reason == \"$event\")")
             [[ "$foundEvent" == "" ]] && echo "Event '$event' not found for pod '$pod'" || found=$((found+1))
-            
+
             errorEvent=$(kubectl -n peerd-ns get events --field-selector involvedObject.kind=Pod,involvedObject.name=$pod -o json | jq -r '.items[] | select(.reason == "P2PDisconnected" or .resosn == "P2PFailed")')
             [[ "$errorEvent" == "" ]] || (echo "Error event found for pod '$pod': $errorEvent" && exit 1)
         done
 
         if [ $found -eq $total ]; then
             echo "Success: All pods have event '$event'."
-            break
+            return
+        elif [ $found -ge $minimumRequired ]; then
+            echo "$found out of $total pods have event '$event', which meets the minimum criteria of $minimumRequired."
+            return
         else
-            echo "Waiting: $found out of $total pods have event '$event'. Attempt $i of 10."
+            echo "Waiting: $found out of $total pods have event '$event'. Attempt $i of 300."
             sleep 15
         fi
     done
 
-    if [ $found -eq $total ]; then
-        return
-    elif [ $found -ge $minimumRequired ]; then
-        echo "Warning: only $found out of $total pods have event '$event', but it meets the minimum criteria of $minimumRequired."
-        return
-    else
-        echo "Validation failed"
-        exit 1
-    fi
+    echo "Validation failed."
+    exit 1
 }
 
 print_peerd_metrics() {
@@ -175,10 +194,83 @@ cmd__nodepool__delete() {
     fi
 }
 
+peerd_pod_watcher() {
+    echo "[Pod Watcher] Starting peerd pod watcher"
+    local event="P2PConnected"
+
+    for ((i = 1; i <= 300; i++)); do
+        # Get the list of pods with the label `app=peerd`
+        pods=$(kubectl -n peerd-ns get pods -l app=peerd -o jsonpath='{.items[*].metadata.name}')
+        if [ -z "$pods" ]; then
+            echo "[Pod Watcher] No pods found with label 'app=peerd'. Retrying..."
+            sleep 15
+            continue
+        fi
+
+        # echo "[Pod Watcher] Found peerd pods: $pods"
+
+        # Check each pod for the specified event
+        for pod in $pods; do
+            # echo "[Pod Watcher] Checking pod '$pod' for event '$event'"
+
+            if kubectl -n peerd-ns get events --field-selector involvedObject.kind=Pod,involvedObject.name="$pod" -o json | \
+                jq -e ".items[] | select(.reason == \"$event\")" > /dev/null; then
+                # echo "[Pod Watcher] Event '$event' found for pod '$pod'"
+
+                NODE_NAME=$(kubectl -n peerd-ns get pod "$pod" -o jsonpath='{.spec.nodeName}')
+                if [ -n "$NODE_NAME" ]; then
+                    currentLabel=$(kubectl get node $NODE_NAME -o jsonpath='{.metadata.labels.peerd-status}')
+                    if [ "$currentLabel" == "connected" ]; then
+                        # echo "[Pod Watcher] Node '$NODE_NAME' already labeled with 'peerd-status=connected'"
+                        continue
+                    else
+                        sleep 5
+                        echo "[Pod Watcher] Labeling node '$NODE_NAME' with 'peerd-status=connected'"
+                        kubectl label node "$NODE_NAME" peerd-status=connected --overwrite
+                    fi
+                else
+                    echo "[Pod Watcher] Failed to get node name for pod '$pod'"
+                fi
+            else
+                echo "[Pod Watcher] Event '$event' not found for pod '$pod'"
+            fi
+        done
+
+        sleep 15
+    done
+
+    echo "[Pod Watcher] Finished watching pods after 300 iterations."
+}
+
+cmd__peerd_pod_watcher__start() {
+    # Start the peerd pod watcher in the background and export the PID.
+    peerd_pod_watcher 2>&1 &
+    local PEERD_POD_WATCHER_PID=$!
+    echo $PEERD_POD_WATCHER_PID > peerd_pod_watcher.pid
+    echo "Peerd pod watcher started with PID: $PEERD_POD_WATCHER_PID"
+}
+
+cmd__peerd_pod_watcher__stop() {
+    local PEERD_POD_WATCHER_PID=$(cat peerd_pod_watcher.pid 2>/dev/null)
+    if [ -n "$PEERD_POD_WATCHER_PID" ]; then
+        echo "Stopping Peerd pod watcher with PID: $PEERD_POD_WATCHER_PID"
+        kill $PEERD_POD_WATCHER_PID
+        if [ $? -eq 0 ]; then
+            echo "Peerd pod watcher stopped successfully."
+            rm -f peerd_pod_watcher.pid
+        else
+            echo "Failed to stop Peerd pod watcher with PID: $PEERD_POD_WATCHER_PID"
+        fi
+    else
+        echo "No Peerd pod watcher process found in file peerd_pod_watcher.pid."
+    fi
+}
+
 cmd__nodepool__up () {
     local nodepool=$1
     local peerd_image_tag=$PEERD_IMAGE_TAG
     local configureMirrors=$PEERD_CONFIGURE_MIRRORS
+    local configureOverlaybdP2p=$PEERD_CONFIGURE_OVERLAYBD_P2P
 
     ensure_azure_token
 
@@ -190,82 +282,90 @@ cmd__nodepool__up () {
     helm uninstall overlaybd-p2p --ignore-not-found=true
 
     echo "creating new nodepool '$nodepool'"
-    nodepool_deploy $AKS_NAME $RESOURCE_GROUP $nodepool
+    nodepool_deploy $AKS_NAME $RESOURCE_GROUP $nodepool $configureOverlaybdP2p
 
     echo "deploying peerd helm chart using tag '$peerd_image_tag'"
     peerd_helm_deploy $nodepool $peerd_image_tag $configureMirrors
 
     echo "waiting for pods to connect"
-    wait_for_peerd_pods $AKS_NAME $RESOURCE_GROUP $nodepool "P2PConnected"
+    wait_for_pod_events $AKS_NAME $RESOURCE_GROUP $nodepool "P2PConnected" "app=peerd"
 }
 
-cmd__test__ctr() {
+cmd__test__llm_pull() {
     aksName=$AKS_NAME
     rg=$RESOURCE_GROUP
     local nodepool=$1
 
-    echo "running test 'ctr'"
+    echo "running test 'llm_pull'"
 
     if [ "$DRY_RUN" == "true" ]; then
-        echo "[dry run] would have run test 'ctr'"
+        echo "[dry run] would have run test 'llm_pull'"
     else
-        # Pull the image on all nodes and verify that at least one P2PActive event is generated.
-        kubectl apply -f $TESTS_AZURE_CLI_DEPLOY_TEMPLATE
+        # Deploy the LLM daemonset to the nodepool.
+        # Since there is only a single node, this acts as a seeding step, allowing peerd to add this content to its hash table.
+        envsubst < $PEERD_LLM_CI_DEPLOY_TEMPLATE | kubectl apply -f -
 
-        wait_for_peerd_pods $context $AKS_NAME $RESOURCE_GROUP $nodepool "P2PActive" 1
+        sleep 30
 
-        echo "fetching metrics from pods"
+        # Wait for image pull to complete by monitoring the pod event for Pulled event.
+        wait_for_pod_events $aksName $rg $nodepool "Pulled" "app=peerd-llm-ci" 1
+
+        # Scale out the nodepool. This will cause peerd pods to be deployed first, followed by the LLM pods due to the affinity rules.
+        echo "Scaling out nodepool '$nodepool' in aks cluster '$aksName' in resource group '$rg' to 4 nodes"
+        az aks nodepool scale --cluster-name $aksName --name $nodepool --resource-group $rg --node-count 4
+
+        # Ensure at least 4 app pods are pulled to compare pull time.
+        sleep 60
+        wait_for_pod_events $aksName $rg $nodepool "Pulled" "app=peerd-llm-ci" 4
+
+        # Ensure there is p2p activity.
+        wait_for_pod_events $AKS_NAME $RESOURCE_GROUP $nodepool "P2PActive" "app=peerd" 1
+
+        echo "fetching metrics from peerd pods"
         print_peerd_metrics
 
         echo "cleaning up apps"
-        helm uninstall peerd --ignore-not-found=true
-        kubectl delete -f $TESTS_AZURE_CLI_DEPLOY_TEMPLATE
 
-        echo "test 'ctr' complete"
+        # This will clean up the peerd-ns namespace, which is where the LLM pods are also deployed.
+        helm uninstall peerd --ignore-not-found=true
+        helm uninstall overlaybd-p2p --ignore-not-found=true
+        
+        echo "test 'llm_pull' complete"
     fi
 
     print_and_exit_if_dry_run
 }
 
-cmd__test__streaming() {
+cmd__test__llm_streaming() {
     aksName=$AKS_NAME
     rg=$RESOURCE_GROUP
     local nodepool=$1
 
-    echo "running test 'streaming'"
+    echo "running test 'llm_streaming'"
 
     if [ "$DRY_RUN" == "true" ]; then
-        echo "[dry run] would have run test 'streaming'"
+        echo "[dry run] would have run test 'llm_streaming'"
     else
-        echo "waiting 5 minutes" 
-        sleep 300
+        # Deploy the LLM daemonset to the nodepool.
+        # Since there is only a single node, this acts as a seeding step, allowing peerd to add this content to its hash table.
+        envsubst < $PEERD_LLM_CI_DEPLOY_TEMPLATE | kubectl apply -f -
 
-        echo "deploying overlaybd p2p configuration"
+        # No need to wait for image pull this time, since it's streaming.
+         # Scale out the nodepool. This will cause peerd pods to be deployed first, followed by the LLM pods due to the affinity rules.
+        az aks nodepool scale --cluster-name $aksName --name $nodepool --resource-group $rg --node-count 4
 
-        # Configure overlaybd p2p.
-        helm install --wait overlaybd-p2p $SCRIPT_DIR/../../../tools/configure-overlaybd-p2p-helm \
-            --set "overlaybd.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=peerd" \
-            --set "overlaybd.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=In" \
-            --set "overlaybd.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0]=ci"
+        wait_for_pod_events $AKS_NAME $RESOURCE_GROUP $nodepool "P2PActive" "app=peerd" 1
 
-        echo "deploying scanner app and waiting 1 minute"
-        envsubst < $SCANNER_APP_DEPLOY_TEMPLATE | kubectl apply -f -
-        sleep 60
-
-        echo "scanner logs"
-        kubectl -n peerd-ns logs -l app=tests-scanner
-
-        wait_for_peerd_pods $context $AKS_NAME $RESOURCE_GROUP $nodepool "P2PActive" 1
-
-        echo "fetching metrics from pods"
+        echo "fetching metrics from peerd pods"
         print_peerd_metrics
 
         echo "cleaning up apps"
-        kubectl delete -f $SCANNER_APP_DEPLOY_TEMPLATE
+
+        # This will clean up the peerd-ns namespace, which is where the LLM pods are also deployed.
         helm uninstall peerd --ignore-not-found=true
         helm uninstall overlaybd-p2p --ignore-not-found=true
 
-        echo "test 'streaming' complete"
+        echo "test 'llm_streaming' complete"
     fi
 
     print_and_exit_if_dry_run
